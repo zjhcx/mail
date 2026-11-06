@@ -107,7 +107,12 @@
                 </div>
               </div>
               <div class="setting-item personalized">
-                <div><span>{{ $t('loginBackground') }}</span></div>
+                <div :title="$t('sharedBackgroundHint')">
+                  <span>{{ $t('loginBackground') }}</span>
+                  <el-tooltip :content="$t('sharedBackgroundHint')">
+                    <Icon class="warning" icon="ph:info" width="18" height="18"/>
+                  </el-tooltip>
+                </div>
                 <div>
                   <el-image
                       class="background"
@@ -1529,6 +1534,7 @@ function delBackground() {
     deleteBackground().then(() => {
       backgroundUrl.value = ''
       setting.value.background = null
+      settingStore.settings.background = null
       ElMessage({
         message: t('delSuccessMsg'),
         type: "success",
@@ -1585,6 +1591,7 @@ async function saveBackground() {
 
   setBackground(image).then(key => {
     setting.value.background = key
+    settingStore.settings.background = key
     showSetBackground.value = false
     ElMessage({
       message: t('saveSuccessMsg'),

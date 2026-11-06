@@ -1,0 +1,205 @@
+/* Shared glass surfaces: keep the wallpaper visible without sacrificing contrast. */
+:root {
+  --glass-surface: rgba(255, 255, 255, 0.76);
+  --glass-card: rgba(255, 255, 255, 0.66);
+  --glass-border: rgba(255, 255, 255, 0.65);
+  --glass-shadow: 0 12px 36px rgba(31, 52, 92, 0.09);
+  --glass-sidebar: rgba(23, 33, 56, 0.86);
+  --glass-radius: 24px;
+  --el-border-radius-base: 12px;
+  --el-border-radius-small: 8px;
+}
+
+html.dark {
+  --glass-surface: rgba(26, 31, 44, 0.82);
+  --glass-card: rgba(36, 42, 57, 0.70);
+  --glass-border: rgba(255, 255, 255, 0.10);
+  --glass-shadow: 0 12px 36px rgba(0, 0, 0, 0.22);
+  --glass-sidebar: rgba(15, 20, 32, 0.88);
+}
+
+.glass-layout.layout {
+  padding: 14px;
+  gap: 14px;
+  isolation: isolate;
+  --settings-page-background: transparent;
+  --extra-light-fill: transparent;
+  --aside-backgound: transparent;
+  --aside-menu-active-background: rgba(131, 173, 255, 0.22);
+  --aside-right-border: none;
+  --email-hover-background: rgba(120, 170, 245, 0.13);
+  --choose-account-background: rgba(120, 170, 245, 0.20);
+}
+
+.workspace-background {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 8% 10%, #d5e8ff, transparent 55%),
+    radial-gradient(ellipse at 92% 85%, #e3dcfa, transparent 55%), #eef3fa;
+}
+
+.dark .workspace-background {
+  background: radial-gradient(ellipse at 8% 10%, #233955, transparent 55%),
+    radial-gradient(ellipse at 92% 85%, #302c4c, transparent 55%), #141b29;
+}
+
+.glass-layout.layout .main-container {
+  min-width: 0;
+  min-height: 0 !important;
+  background: transparent !important;
+}
+
+.glass-layout.layout .el-main {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.glass-layout.layout > .aside,
+.glass-layout.layout .el-header,
+.glass-layout.layout .main-view,
+.glass-layout.layout .account-box {
+  background: var(--glass-surface) !important;
+  border: 1px solid var(--glass-border) !important;
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+  backdrop-filter: blur(20px) saturate(125%);
+}
+
+.glass-layout.layout > .aside {
+  background: var(--glass-sidebar) !important;
+  overflow: hidden;
+}
+
+.glass-layout.layout .el-header {
+  margin-bottom: 12px;
+  padding: 0 6px;
+}
+
+.glass-layout.layout :is(.main-box-show, .main-box-hide) {
+  gap: 12px;
+  min-width: 0;
+  height: calc(100% - 72px);
+}
+
+.glass-layout.layout .main-view {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The main surface supplies the blur; nested cards only need a light tint. */
+.glass-layout.layout :is(.settings-card, .code-item, .number-item),
+.glass-layout.layout .settings-page .box > :is(.container, .language, .preference-item, .del-email) {
+  background: var(--glass-card) !important;
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 22px;
+  box-shadow: 0 4px 20px rgba(25, 45, 85, 0.04);
+}
+
+.glass-layout.layout .settings-page .box {
+  padding: 24px;
+}
+
+.glass-layout.layout .settings-page .box > :is(.container, .language, .preference-item, .del-email) {
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.glass-layout.layout .settings-page .setting-row {
+  grid-template-columns: 120px minmax(0, 220px);
+  column-gap: clamp(20px, 5vw, 80px);
+}
+
+.glass-layout.layout .account-box .item {
+  background: var(--glass-card);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.glass-layout.layout .account-box .item-choose {
+  background: var(--choose-account-background);
+}
+
+.glass-layout.layout .el-menu-item {
+  border-radius: 12px;
+  transition: background-color 180ms ease;
+}
+
+.glass-layout.layout .compose-bar {
+  border-radius: 14px;
+  height: 44px;
+  box-shadow: 0 6px 18px rgba(24, 144, 255, 0.23);
+}
+
+.glass-layout.layout .manage-title {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+}
+
+.glass-layout.layout .email-row {
+  border-radius: 12px;
+  transition: background-color 160ms ease;
+}
+
+.glass-layout.layout .el-table {
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: var(--glass-card);
+  --el-table-row-hover-bg-color: var(--email-hover-background);
+}
+
+.el-dialog,
+.el-message-box {
+  border-radius: 24px !important;
+  background: var(--glass-surface) !important;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+}
+
+.el-dialog { padding: 24px; }
+.el-card { --el-card-border-radius: 20px; }
+.el-button { border-radius: 12px; }
+.el-button.is-circle { border-radius: 50%; }
+
+/* Preserve keyboard focus instead of relying on color-only hover feedback. */
+:where(button, a, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 3px;
+}
+
+@media (max-width: 1025px) {
+  .glass-layout.layout > .aside-show {
+    top: 10px;
+    left: 10px;
+    height: calc(100% - 20px);
+  }
+}
+
+@media (max-width: 767px) {
+  .glass-layout.layout { padding: 8px; gap: 8px; --glass-radius: 20px; }
+  .glass-layout.layout .el-header { margin-bottom: 8px; }
+  .glass-layout.layout :is(.main-box-show, .main-box-hide) { height: calc(100% - 58px); gap: 0; }
+  .glass-layout.layout .account-box.show {
+    height: calc(100% - 74px);
+    background: var(--glass-surface) !important;
+  }
+  .glass-layout.layout .settings-page .box { padding: 14px; }
+  .glass-layout.layout .settings-page .box > :is(.container, .language, .preference-item, .del-email) { padding: 18px; }
+  .glass-layout.layout .settings-page .setting-row { grid-template-columns: 96px minmax(0, 1fr); column-gap: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-layout.layout *, .glass-layout.layout *::before, .glass-layout.layout *::after { transition: none !important; }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root { --glass-surface: rgba(255, 255, 255, 0.95); --glass-sidebar: #172138; }
+  html.dark { --glass-surface: rgba(26, 31, 44, 0.96); --glass-sidebar: #0f1420; }
+}

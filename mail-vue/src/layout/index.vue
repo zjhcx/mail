@@ -1,5 +1,6 @@
 <template>
-  <el-container class="layout">
+  <el-container class="layout glass-layout">
+    <div class="workspace-background" :style="backgroundStyle" aria-hidden="true"></div>
     <el-aside
         class="aside"
         :class="uiStore.asideShow ? 'aside-show' : 'el-aside-hide'">
@@ -25,11 +26,18 @@
 import Aside from '@/layout/aside/index.vue'
 import Header from '@/layout/header/index.vue'
 import Main from '@/layout/main/index.vue'
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { useSettingStore } from '@/store/setting.js'
+import { getBackgroundStyle } from '@/utils/background.js'
 import {useUiStore} from "@/store/ui.js";
 import writer from '@/layout/write/index.vue'
 
 const uiStore = useUiStore();
+const settingStore = useSettingStore()
+const backgroundStyle = computed(() => getBackgroundStyle(
+  settingStore.settings.background,
+  settingStore.settings.r2Domain
+))
 const writerRef = ref({})
 const isMobile = ref(window.innerWidth < 1025)
 const handleResize = () => {

@@ -1,5 +1,5 @@
 <template>
-  <div id="login-box" :style=" background ? 'background: var(--el-bg-color)' : ''" v-loading="oauthLoading" element-loading-text="登录中...">
+  <div id="login-box" :style="settingStore.settings.background ? { background: 'var(--el-bg-color)' } : {}" v-loading="oauthLoading" element-loading-text="登录中...">
     <div id="background-wrap" v-if="!settingStore.settings.background">
       <div class="x1 cloud"></div>
       <div class="x2 cloud"></div>
@@ -7,7 +7,7 @@
       <div class="x4 cloud"></div>
       <div class="x5 cloud"></div>
     </div>
-    <div v-else :style="background"></div>
+    <div v-else class="custom-background" :style="background"></div>
     <div class="form-wrapper">
       <div class="container">
         <span class="form-title">{{ settingStore.settings.title }}</span>
@@ -165,7 +165,7 @@ import {useAccountStore} from "@/store/account.js";
 import {useUserStore} from "@/store/user.js";
 import {useUiStore} from "@/store/ui.js";
 import {Icon} from "@iconify/vue";
-import {cvtR2Url} from "@/utils/convert.js";
+import {getBackgroundStyle} from "@/utils/background.js";
 import {loginUserInfo} from "@/request/my.js";
 import {permsToRouter} from "@/perm/perm.js";
 import {useI18n} from "vue-i18n";
@@ -293,15 +293,10 @@ const loginOpacity = computed(() => {
 
 const hideLoginDomain = computed(() => settingStore.settings.loginDomain === 1)
 
-const background = computed(() => {
-
-  return settingStore.settings.background ? {
-    'background-image': `url(${cvtR2Url(settingStore.settings.background)})`,
-    'background-repeat': 'no-repeat',
-    'background-size': 'cover',
-    'background-position': 'center'
-  } : ''
-})
+const background = computed(() => getBackgroundStyle(
+  settingStore.settings.background,
+  settingStore.settings.r2Domain,
+))
 
 const openSelect = () => {
   mySelect.value.toggleMenu()
@@ -650,64 +645,81 @@ function submitRegister() {
 <style lang="scss" scoped>
 
 .form-wrapper {
-  position: fixed;
-  right: 0;
+  position: relative;
   height: 100%;
+  min-height: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 48px clamp(24px, 7vw, 120px);
   z-index: 10;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  @media (max-width: 767px) {
-    width: 100%;
-  }
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .container {
+  box-sizing: border-box;
   background: v-bind(loginOpacity);
-  padding-left: 40px;
-  padding-right: 40px;
+  background: color-mix(in srgb, v-bind(loginOpacity) 88%, transparent);
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
+  padding: 40px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  width: 450px;
-  height: 100%;
-  border-left: 1px solid var(--login-border);
-  box-shadow: var(--el-box-shadow-light);
-  @media (max-width: 1024px) {
-    padding: 20px 18px;
-    width: 384px;
-    margin-left: 18px;
-  }
+  width: 440px;
+  max-width: 100%;
+  flex-shrink: 0;
+  margin: auto 0 auto auto;
+  border: 1px solid var(--login-border);
+  border-radius: 28px;
+  box-shadow: 0 24px 72px rgba(15, 23, 42, 0.16),
+    0 4px 16px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  color: var(--el-text-color-primary);
+
   @media (max-width: 767px) {
-    border: 1px solid var(--login-border);
-    padding: 20px 18px;
-    border-radius: 6px;
-    height: fit-content;
-    width: 100%;
-    margin-right: 18px;
-    margin-left: 18px;
+    margin: auto;
+    padding: 30px 24px;
+    border-radius: 24px;
   }
 
   .btn {
-    height: 36px;
+    min-height: 44px;
+    height: auto;
+    padding: 12px 16px;
     width: 100%;
-    border-radius: 6px;
+    border-radius: 12px;
+    font-weight: 600;
+    transition: box-shadow 0.2s ease, background-color 0.2s ease;
+
+    &.el-button--primary {
+      box-shadow: 0 6px 18px rgba(64, 158, 255, 0.2);
+    }
   }
 
   .form-desc {
-    margin-top: 5px;
-    margin-bottom: 18px;
+    margin-top: 10px;
+    margin-bottom: 28px;
     color: var(--form-desc-color);
+    font-size: 14px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
   }
 
   .form-title {
-    font-weight: bold;
-    font-size: 22px !important;
+    font-weight: 700;
+    font-size: 28px;
+    line-height: 1.3;
+    letter-spacing: -0.5px;
+    overflow-wrap: anywhere;
   }
 
   .switch {
-    margin-top: 20px;
+    margin-top: 26px;
     text-align: center;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--el-text-color-regular);
 
     span {
       color: var(--login-switch-color);
@@ -716,22 +728,46 @@ function submitRegister() {
   }
 
   :deep(.el-input__wrapper) {
-    border-radius: 6px;
+    border-radius: 12px;
     background: var(--el-bg-color);
+    background: color-mix(in srgb, var(--el-bg-color) 82%, transparent);
+    padding: 1px 14px;
   }
 
   .email-input :deep(.el-input__wrapper) {
-    border-radius: 6px 0 0 6px;
-    background: var(--el-bg-color);
+    border-radius: 12px 0 0 12px;
+    min-width: 0;
   }
 
   .el-input {
-    height: 38px;
+    height: 46px;
     width: 100%;
     margin-bottom: 18px;
 
     :deep(.el-input__inner) {
-      height: 36px;
+      height: 44px;
+    }
+  }
+
+  :deep(.el-input-group__append) {
+    max-width: 52%;
+    border-radius: 0 12px 12px 0;
+
+    > div > div:last-child {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+
+      span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+
+    .setting-icon {
+      top: 0;
+      flex-shrink: 0;
     }
   }
 }
@@ -791,6 +827,8 @@ function submitRegister() {
 
 .register-turnstile {
   margin-bottom: 18px;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .select {
@@ -813,20 +851,49 @@ function submitRegister() {
 
 
 #login-box {
-  background: linear-gradient(to bottom, #2980b9, #6dd5fa, #fff);
-  font: 100% Arial, sans-serif;
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(145deg, #599bc8 0%, #b4dcef 52%, #eef5fb 100%);
+  font-family: inherit;
   height: 100%;
+  min-height: 100dvh;
   margin: 0;
   padding: 0;
-  overflow-x: hidden;
+  overflow: hidden;
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
+
+  @media (max-width: 767px) {
+    .form-wrapper {
+      padding: 24px 16px 60px;
+      padding-bottom: max(60px, env(safe-area-inset-bottom));
+    }
+  }
+
+  @media (max-width: 359px) {
+    .container {
+      padding: 28px 18px;
+    }
+  }
 }
 
-
-#background-wrap {
+#background-wrap,
+.custom-background {
+  position: absolute;
+  inset: 0;
   height: 100%;
   z-index: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud {
+    animation: none;
+  }
+
+  .container .btn {
+    transition: none;
+  }
 }
 
 @keyframes animateCloud {
