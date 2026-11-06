@@ -19,19 +19,18 @@ import dayjs from 'dayjs';
 import { toUtc } from '../utils/date-uitil';
 import { t } from '../i18n/i18n.js';
 import verifyRecordService from './verify-record-service';
+import { assertPrimaryEmail } from '../utils/alias-policy';
 
 const loginService = {
 
-	async register(c, params, oauth = false) {
+	async register(c, params) {
 
 		const { email, password, token, code } = params;
 
 		let { regKey, register, registerVerify, regVerifyCount, minEmailPrefix, emailPrefixFilter } = await settingService.query(c)
 
-		if (oauth) {
-			registerVerify = settingConst.registerVerify.CLOSE;
-			register = settingConst.register.OPEN;
-		}
+		// OAuth signup obeys exactly the same registration and verification policy.
+		assertPrimaryEmail(email);
 
 		if (register === settingConst.register.CLOSE) {
 			throw new BizError(t('regDisabled'));
@@ -243,8 +242,12 @@ const loginService = {
 			throw new BizError(t('isBanUser'));
 		}
 
-		if (!await cryptoUtils.verifyPassword(password, userRow.salt, userRow.password) && !noVerifyPwd) {
-			throw new BizError(t('IncorrectPwd'));
+		if (!noVerifyPwd) {
+			const verified = await cryptoUtils.verifyPasswordAndRehash(password, userRow.salt, userRow.password);
+			if (!verified.verified) throw new BizError(t('IncorrectPwd'));
+			if (verified.replacement && !await userService.upgradePasswordHash(c, userRow, verified.replacement)) {
+				throw new BizError(t('IncorrectPwd'));
+			}
 		}
 
 		const uuid = uuidv4();

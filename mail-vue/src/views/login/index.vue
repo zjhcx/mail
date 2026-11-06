@@ -112,7 +112,7 @@
         </template>
       </div>
     </div>
-    <el-dialog class="bind-dialog" v-model="showBindForm"  title="注册邮箱" >
+    <el-dialog class="bind-dialog" v-model="showBindForm" @closed="clearBinding" title="注册邮箱" >
       <div class="bind-container">
         <el-input :class="!hideLoginDomain ? 'email-input' : ''" v-model="bindForm.email" type="text" :placeholder="$t('emailAccount')" autocomplete="off" @keyup.enter="bind">
           <template #append v-if="!hideLoginDomain">
@@ -141,6 +141,7 @@
                   type="text" autocomplete="off" @keyup.enter="bind"/>
         <el-input v-if="settingStore.settings.regKey === 2" v-model="bindForm.code"
                   :placeholder="$t('regKeyOptional')" type="text" autocomplete="off" @keyup.enter="bind"/>
+        <div v-show="verifyShow" ref="bindTurnstileContainer"></div>
         <el-button class="btn" type="primary" @click="bind" :loading="bindLoading"
         >绑定
         </el-button>
@@ -154,8 +155,7 @@
 
 <script setup>
 import router from "@/router";
-import {useRoute} from "vue-router";
-import {computed, nextTick, reactive, ref} from "vue";
+import {computed, nextTick, onBeforeUnmount, reactive, ref, watch} from "vue";
 import {login} from "@/request/login.js";
 import {register} from "@/request/login.js";
 import {websiteConfig} from "@/request/setting.js";
@@ -169,7 +169,8 @@ import {cvtR2Url} from "@/utils/convert.js";
 import {loginUserInfo} from "@/request/my.js";
 import {permsToRouter} from "@/perm/perm.js";
 import {useI18n} from "vue-i18n";
-import {oauthBindUser, oauthLinuxDoLogin, oauthGithubLogin, oauthGoogleLogin} from "@/request/ouath.js";
+import {oauthStart, oauthBindUser, oauthLinuxDoLogin, oauthGithubLogin, oauthGoogleLogin} from "@/request/ouath.js";
+import {rememberOAuth, consumeOAuthCallback, registrationNeedsVerification, OAUTH_STORAGE_KEY} from "@/utils/oauth-flow.js";
 import {reloadTurnstileScript} from "@/utils/turnstile-script.js";
 
 const {t} = useI18n();
@@ -177,7 +178,6 @@ const accountStore = useAccountStore();
 const userStore = useUserStore();
 const uiStore = useUiStore();
 const settingStore = useSettingStore();
-const route = useRoute();
 const loginLoading = ref(false)
 const bindLoading = ref(false)
 const oauthLoading = ref(false);
@@ -186,12 +186,6 @@ const show = ref('login')
 
 const oauthKeys = ['linuxdo', 'github', 'google']
 
-const oauthProvider = computed(() => {
-  const fromState = route.query.state
-  if (oauthKeys.includes(fromState)) return fromState
-  const fromStore = sessionStorage.getItem('oauthProvider')
-  return oauthKeys.includes(fromStore) ? fromStore : null
-})
 
 const oauthProviders = computed(() => {
   const allProviders = [
@@ -204,7 +198,7 @@ const oauthProviders = computed(() => {
 
 const bindForm = reactive({
   email: '',
-  oauthUserId: '',
+  bindToken: '',
   code: ''
 })
 
@@ -227,60 +221,70 @@ suffix.value = domainList[0]
 const verifyShow = ref(false)
 let verifyToken = ''
 let turnstileId = null
+let verificationVersion = 0
 let botJsError = ref(false)
-let verifyErrorCount = 0
 let turnstileRecoveryAttempted = false
 const turnstileContainer = ref(null)
+const bindTurnstileContainer = ref(null)
 const turnstileContainerKey = ref(0)
+const needsVerification = computed(() => registrationNeedsVerification(settingStore.settings))
 
-async function recoverTurnstile() {
+function removeVerification() {
+  ++verificationVersion
+  if (turnstileId !== null) {
+    try { window.turnstile?.remove(turnstileId) } catch {}
+  }
+  turnstileId = null
+  verifyToken = ''
+}
+
+async function ensureVerification(forceReload = false) {
   if (turnstileRecoveryAttempted) return
   turnstileRecoveryAttempted = true
+  const requestedVersion = verificationVersion
   botJsError.value = false
-  verifyToken = ''
-  turnstileId = null
-  turnstileContainerKey.value++
+  verifyShow.value = true
   try {
-    const api = await reloadTurnstileScript()
+    const api = forceReload || !window.turnstile ? await reloadTurnstileScript() : window.turnstile
     await nextTick()
-    if (show.value === 'login' || !turnstileContainer.value) return
-    turnstileId = api.render(turnstileContainer.value)
-  } catch (error) {
+    if (requestedVersion !== verificationVersion) return
+    const target = showBindForm.value ? bindTurnstileContainer.value : turnstileContainer.value
+    if (!target || (!showBindForm.value && show.value === 'login')) return
+    removeVerification()
+    const widgetVersion = verificationVersion
+    turnstileId = api.render(target, {
+      sitekey: settingStore.settings.siteKey,
+      callback: token => { if (widgetVersion === verificationVersion) verifyToken = token },
+      'expired-callback': () => { if (widgetVersion === verificationVersion) verifyToken = '' },
+      'error-callback': () => { if (widgetVersion === verificationVersion) { verifyToken = ''; botJsError.value = true } },
+    })
+  } catch {
     botJsError.value = true
-    console.warn('Turnstile recovery failed', error)
+    ElMessage.error('人机验证加载失败，请重试')
   } finally {
     turnstileRecoveryAttempted = false
   }
 }
 
-window.onTurnstileSuccess = (token) => {
-  verifyToken = token;
-};
-
-window.onTurnstileError = (e) => {
-  if (verifyErrorCount >= 4) {
-    return
-  }
-  verifyErrorCount++
-  console.warn('人机验加载失败', e)
-  setTimeout(() => {
-    nextTick(() => {
-      if (!turnstileId) {
-        turnstileId = window.turnstile.render('.register-turnstile')
-      } else {
-        window.turnstile.reset(turnstileId);
-      }
-    })
-  }, 1500)
-};
-
-window.loadAfter = (e) => {
-  console.log('loadAfter')
+function requireVerification() {
+  if (!needsVerification.value || verifyToken) return true
+  if (!verifyShow.value || botJsError.value || turnstileId === null) ensureVerification(botJsError.value)
+  else ElMessage.error(t('botVerifyMsg'))
+  return false
 }
 
-window.loadBefore = (e) => {
-  console.log('loadBefore')
+function clearBinding() {
+  bindForm.bindToken = ''
+  bindForm.code = ''
+  removeVerification()
+  verifyShow.value = false
 }
+
+watch(show, () => {
+  removeVerification()
+  verifyShow.value = false
+})
+onBeforeUnmount(removeVerification)
 
 const loginOpacity = computed(() => {
   const opacity = settingStore.settings.loginOpacity
@@ -311,16 +315,21 @@ const getEmailName = (email) => {
   return email.split('@')[0]
 }
 
-function oauthLogin(provider) {
-  const clientId = settingStore.settings[provider + 'ClientId']
-  const redirectUri = encodeURIComponent(window.location.origin + '/login')
-  sessionStorage.setItem('oauthProvider', provider)
-  const authorizeUrls = {
-    linuxdo: `https://connect.linux.do/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=openid+profile+email&state=${provider}`,
-    github: `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=user:email&state=${provider}`,
-    google: `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=openid+profile+email&state=${provider}`,
+async function oauthLogin(provider) {
+  if (!oauthKeys.includes(provider) || oauthLoading.value) return
+  clearBinding()
+  sessionStorage.removeItem(OAUTH_STORAGE_KEY)
+  oauthLoading.value = true
+  try {
+    const redirectUri = window.location.origin + '/login'
+    const data = await oauthStart(provider, redirectUri)
+    const target = rememberOAuth(sessionStorage, provider, redirectUri, data, window.location.origin)
+    window.location.assign(target)
+  } catch (error) {
+    sessionStorage.removeItem(OAUTH_STORAGE_KEY)
+    ElMessage.error(error.message || 'OAuth 登录启动失败，请重试')
+    oauthLoading.value = false
   }
-  window.location.href = authorizeUrls[provider]
 }
 
 const loginFns = {
@@ -332,41 +341,48 @@ const loginFns = {
 oauthGetUser();
 
 async function oauthGetUser() {
-
-  const params = new URLSearchParams(window.location.search)
-  const code = params.get('code')
-  if (!code || !oauthProvider.value) return
-
-  const provider = oauthProvider.value
-  oauthLoading.value = true
-  sessionStorage.removeItem('oauthProvider')
+  let callback
+  try {
+    callback = consumeOAuthCallback(sessionStorage, window.location.search, window.location.origin)
+  } catch (error) {
+    window.history.replaceState({}, '', window.location.origin + window.location.pathname)
+    clearBinding()
+    ElMessage.error(error.message)
+    return
+  }
+  if (!callback) return
   window.history.replaceState({}, '', window.location.origin + window.location.pathname)
-
-  loginFns[provider](code, window.location.origin + '/login').then(data => {
-
-    bindForm.oauthUserId = data.userInfo.oauthUserId;
-
-    if (!data.token) {
-      showBindForm.value = true
-      oauthLoading.value = false
-      ElMessage({
-        message: '请注册绑定一个邮箱',
-        type: 'warning',
-        duration: 4000,
-        plain: true,
-      })
-      return;
+  oauthLoading.value = true
+  try {
+    const data = await loginFns[callback.provider](callback.code, callback.redirectUri, callback.state)
+    if (typeof data.token === 'string' && data.token) {
+      await saveToken(data.token)
+      return
     }
-
-    saveToken(data.token);
-  }).catch(() => {
+    if (typeof data.bindToken !== 'string' || !/^[a-f0-9]{64}$/.test(data.bindToken)) throw new Error('OAuth 绑定凭据无效，请重新登录')
+    if (settingStore.settings.register !== 0) throw new Error('注册已关闭，无法创建新的 OAuth 邮箱；已有绑定账户仍可登录')
+    bindForm.bindToken = data.bindToken
+    showBindForm.value = true
+    ElMessage.warning('请注册绑定一个邮箱；绑定凭据仅限本次使用，有效期10分钟')
+    if (needsVerification.value) await ensureVerification()
+  } catch (error) {
+    showBindForm.value = false
+    clearBinding()
+    ElMessage.error(error.message || 'OAuth 登录失败，请重新登录')
+  } finally {
     oauthLoading.value = false
-  })
+  }
 }
 
 function bind() {
 
   if (bindLoading.value) return
+  if (!bindForm.bindToken || settingStore.settings.register !== 0) {
+    clearBinding()
+    showBindForm.value = false
+    ElMessage.error('绑定凭据失效或注册已关闭，请重新进行 OAuth 登录')
+    return
+  }
 
   if (!bindForm.email) {
     ElMessage({
@@ -413,14 +429,19 @@ function bind() {
 
   }
 
-  const form = {email, oauthUserId: bindForm.oauthUserId, code: bindForm.code}
+  if (!requireVerification()) return
+  const form = {email, bindToken: bindForm.bindToken, code: bindForm.code, token: verifyToken}
 
   bindLoading.value = true
-  oauthBindUser(form).then(data => {
-    saveToken(data.token)
+  oauthBindUser(form).then(async data => {
+    if (typeof data.token !== 'string' || !data.token) throw new Error('绑定结果无效')
+    clearBinding()
+    await saveToken(data.token)
   }).catch(() => {
-    bindLoading.value = false
-  })
+    clearBinding()
+    showBindForm.value = false
+    ElMessage.error('绑定失败，本次凭据已作废，请重新点击 OAuth 登录后重试')
+  }).finally(() => { bindLoading.value = false })
 }
 
 const submit = () => {
@@ -572,34 +593,7 @@ function submitRegister() {
 
   }
 
-  if (!verifyToken && (settingStore.settings.registerVerify === 0 || (settingStore.settings.registerVerify === 2 && settingStore.settings.regVerifyOpen))) {
-    if (turnstileRecoveryAttempted) return
-    if (!verifyShow.value) {
-      verifyShow.value = true
-      nextTick(() => {
-        if (!turnstileId) {
-          try {
-            turnstileId = window.turnstile.render('.register-turnstile')
-          } catch (e) {
-            botJsError.value = true
-            console.log('人机验证js加载失败')
-            recoverTurnstile()
-          }
-        } else {
-          window.turnstile.reset('.register-turnstile')
-        }
-      })
-    } else if (botJsError.value) {
-      recoverTurnstile()
-    } else {
-      ElMessage({
-        message: t('botVerifyMsg'),
-        type: "error",
-        plain: true
-      })
-    }
-    return;
-  }
+  if (!requireVerification()) return
 
   registerLoading.value = true
 
@@ -617,7 +611,7 @@ function submitRegister() {
     registerForm.confirmPassword = ''
     registerForm.code = ''
     registerLoading.value = false
-    verifyToken = ''
+    removeVerification()
     settingStore.settings.regVerifyOpen = regVerifyOpen
     verifyShow.value = false
     ElMessage({
@@ -629,19 +623,12 @@ function submitRegister() {
 
     registerLoading.value = false
 
+    verifyToken = ''
     if (res.code === 400) {
-      verifyToken = ''
       settingStore.settings.regVerifyOpen = true
-      if (turnstileId) {
-        window.turnstile.reset(turnstileId)
-      } else {
-        nextTick(() => {
-          turnstileId = window.turnstile.render('.register-turnstile')
-        })
-      }
-      verifyShow.value = true
-
     }
+    if (needsVerification.value) ensureVerification()
+
   });
 }
 

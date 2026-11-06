@@ -33,8 +33,27 @@ const dbInit = {
 		await this.v3_2DB(c);
 		await this.v3_3DB(c);
 		await this.v3_4DB(c);
+		await this.oauthSecurityDB(c);
 		await settingService.refresh(c);
 		return c.text('success');
+	},
+
+	async oauthSecurityDB(c) {
+		// Never choose/merge a duplicate identity: its ownership may already be polluted.
+		const duplicate = await c.env.db.prepare(`SELECT platform, oauth_user_id, COUNT(*) AS count FROM oauth GROUP BY platform, oauth_user_id HAVING COUNT(*) > 1 LIMIT 1`).first();
+		const invalid = await c.env.db.prepare(`SELECT oauth_id FROM oauth WHERE platform IS NULL OR platform NOT IN ('linuxdo','github','google') OR oauth_user_id IS NULL OR oauth_user_id = '' OR length(oauth_user_id) > 255 OR oauth_user_id GLOB '*[^0-9]*' OR substr(oauth_user_id,1,1) = '0' LIMIT 1`).first();
+		if (duplicate || invalid) throw new Error('OAuth security migration refused: ambiguous or invalid historical identities require manual review; no records were merged.');
+		await c.env.db.batch([
+			c.env.db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_platform_identity ON oauth(platform, oauth_user_id)'),
+			c.env.db.prepare(`CREATE TABLE IF NOT EXISTS oauth_security_flow (
+				id TEXT PRIMARY KEY, browser TEXT NOT NULL, provider TEXT NOT NULL,
+				redirect_uri TEXT NOT NULL, verifier TEXT NOT NULL DEFAULT '', purpose TEXT NOT NULL,
+				identity TEXT NOT NULL DEFAULT '', oauth_id INTEGER, expires INTEGER NOT NULL,
+				consumed INTEGER NOT NULL DEFAULT 0
+			)`),
+			c.env.db.prepare('CREATE INDEX IF NOT EXISTS idx_oauth_security_expiry ON oauth_security_flow(expires)'),
+			c.env.db.prepare('CREATE TABLE IF NOT EXISTS oauth_binding_claim (oauth_id INTEGER PRIMARY KEY, flow_id TEXT NOT NULL UNIQUE)')
+		]);
 	},
 
 	async v3_4DB(c) {

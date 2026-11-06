@@ -114,9 +114,8 @@ import {useEmailStore} from "@/store/email.js";
 import {fileToBase64, formatBytes} from "@/utils/file-utils.js";
 import {getIconByName} from "@/utils/icon-utils.js";
 import sendPercent from "@/components/send-percent/index.vue"
-import {toOssDomain} from "@/utils/convert.js";
+import {formatAttachmentHtml, restoreAttachmentKeys} from "@/utils/attachment-urls.js";
 import {formatDetailDate} from "@/utils/day.js";
-import {useSettingStore} from "@/store/setting.js";
 import {userDraftStore} from "@/store/draft.js";
 import {useWriterStore} from "@/store/writer.js";
 import db from "@/db/db.js";
@@ -135,7 +134,6 @@ defineExpose({
 const {t} = useI18n()
 const writerStore = useWriterStore();
 const draftStore = userDraftStore()
-const settingStore = useSettingStore()
 const emailStore = useEmailStore();
 const accountStore = useAccountStore()
 const editor = ref({})
@@ -145,6 +143,8 @@ const percent = ref(0)
 let percentMessage = null
 let sending = false
 const defValue = ref('')
+let composeVersion = 0
+let preparing = false
 const contactsTabRef = ref({})
 const showContacts = ref(false)
 const mySelect = ref()
@@ -311,6 +311,7 @@ function chooseFile() {
 }
 
 async function sendEmail() {
+  if (preparing) return
 
   if (form.receiveEmail.length === 0) {
     ElMessage({
@@ -330,7 +331,7 @@ async function sendEmail() {
     return
   }
 
-  form.content = editor.value.getContent();
+  form.content = restoreAttachmentKeys(editor.value.getContent());
 
   if (!form.content) {
     ElMessage({
@@ -397,7 +398,7 @@ async function sendEmail() {
       form.subject = ''
       form.content = ''
       form.receiveEmail = []
-      draftStore.setDraft = {...toRaw(form)}
+      draftStore.setDraft = {...toRaw(form), content: restoreAttachmentKeys(form.content)}
     }
 
     show.value = false
@@ -432,6 +433,8 @@ function addRecipientRecord() {
 }
 
 function resetForm() {
+  ++composeVersion
+  preparing = false
   form.receiveEmail = []
   form.subject = ''
   form.content = ''
@@ -448,7 +451,7 @@ function resetForm() {
 }
 
 function change(content, text) {
-  form.content = content;
+  form.content = restoreAttachmentKeys(content);
   form.text = text
 }
 
@@ -456,80 +459,59 @@ function focusChange() {
   if (selectStatus) openSelect()
 }
 
-function openForward(email) {
-  resetForm();
-
-  email.subject = email.subject || ''
-
-  form.subject = email.subject
-  form.sendType = 'forward'
-
-  defValue.value = ''
-
-  setTimeout(() => {
-    defValue.value = `
-      ${formatImage(email.content) || `<pre style="font-family: inherit;word-break: break-word;white-space: pre-wrap;margin: 0">${email.text}</pre>`}
-    `
-    open()
-
-    nextTick(() => {
-      backReply.content = editor.value.getContent()
-      backReply.subject = form.subject
-      backReply.receiveEmail = form.receiveEmail
-      backReply.sendType = form.sendType
-    })
-
-  });
+function escapeText(value) {
+  return String(value || '').replace(/[&<>"']/g, char => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char]))
 }
 
-function openReply(email) {
+async function prepareComposer(html, version) {
+  preparing = true
+  try {
+    const content = await formatAttachmentHtml(html)
+    if (version !== composeVersion) return
+    defValue.value = content
+    form.content = restoreAttachmentKeys(content)
+    open(true)
+    await nextTick()
+    if (version !== composeVersion) return
+    backReply.content = restoreAttachmentKeys(editor.value.getContent())
+    backReply.subject = form.subject
+    backReply.receiveEmail = [...form.receiveEmail]
+    backReply.sendType = form.sendType
+  } catch (error) {
+    if (version === composeVersion) ElMessage.error(error.message || 'Attachment unavailable')
+  } finally {
+    if (version === composeVersion) preparing = false
+  }
+}
 
-  resetForm();
+async function openForward(email) {
+  resetForm()
+  form.subject = email.subject || ''
+  form.sendType = 'forward'
+  defValue.value = ''
+  await prepareComposer(email.content || `<pre>${escapeText(email.text)}</pre>`, composeVersion)
+}
 
-  email.subject = email.subject || ''
-
+async function openReply(email) {
+  resetForm()
+  const subject = email.subject || ''
   form.receiveEmail.push(email.sendEmail)
-  form.subject = (
-      email.subject.startsWith('Re:') ||
-      email.subject.startsWith('Re：') ||
-      email.subject.startsWith('回复：') ||
-      email.subject.startsWith('回复:')) ? email.subject : 'Re: ' + email.subject
+  form.subject = /^(Re[:：]|回复[:：])/.test(subject) ? subject : 'Re: ' + subject
   form.sendType = 'reply'
   form.emailId = email.emailId
-
   defValue.value = ''
-
-  setTimeout(() => {
-    defValue.value = `
-    <div></div>
-    <div>
-    <br>
-        ${formatDetailDate(email.createTime)} ${email.name} &lt${email.sendEmail}&gt ${t('wrote')}:
-    </div>
+  const html = `<div></div><div><br>${escapeText(formatDetailDate(email.createTime))} ${escapeText(email.name)} &lt;${escapeText(email.sendEmail)}&gt; ${escapeText(t('wrote'))}:</div>
     <blockquote class="mceNonEditable" style="margin: 0 0 0 0.8ex;border-left: 1px solid rgb(204,204,204);padding-left: 1ex;">
-      <articl>
-          ${formatImage(email.content) || `<pre style="font-family: inherit;word-break: break-word;white-space: pre-wrap;margin: 0">${email.text}</pre>`}
-      </article>
+      ${email.content || `<pre>${escapeText(email.text)}</pre>`}
     </blockquote>`
-    open()
-
-    nextTick(() => {
-      backReply.content = editor.value.getContent()
-      backReply.subject = form.subject
-      backReply.receiveEmail = form.receiveEmail
-      backReply.sendType = form.sendType
-    })
-  })
-
+  await prepareComposer(html, composeVersion)
 }
 
-function formatImage(content) {
-  content = content || '';
-  const domain = settingStore.settings.r2Domain;
-  return content.replace(/{{domain}}/g, toOssDomain(domain) + '/');
-}
-
-function open() {
+function open(prepared = false) {
+  if (!prepared) {
+    ++composeVersion
+    preparing = false
+  }
   if (!accountStore.currentAccount.email) {
     form.sendEmail = userStore.user.email;
     form.accountId = userStore.user.account.accountId;
@@ -543,12 +525,11 @@ function open() {
   editor.value.focus()
 }
 
-function openDraft(draft) {
+async function openDraft(draft) {
+  resetForm()
   Object.assign(form, {...draft, manyType: draft.manyType || 'together'})
   defValue.value = ''
-  setTimeout(() => defValue.value = form.content)
-  show.value = true;
-  editor.value.focus()
+  await prepareComposer(form.content, composeVersion)
 }
 
 const handleKeyDown = (event) => {
@@ -566,15 +547,17 @@ onUnmounted(() => {
 });
 
 function close() {
+  ++composeVersion
+  preparing = false
 
   if (selectStatus) openSelect();
 
   if (!form.content) {
-    form.content = editor.value.getContent();
+    form.content = restoreAttachmentKeys(editor.value.getContent());
   }
 
   if (form.draftId) {
-    draftStore.setDraft = {...toRaw(form)}
+    draftStore.setDraft = {...toRaw(form), content: restoreAttachmentKeys(form.content)}
     show.value = false
     resetForm()
     return;
@@ -588,7 +571,7 @@ function close() {
 
   if (backReply.sendType === 'reply' || backReply.sendType === 'forward') {
     let subjectFlag = form.subject === backReply.subject
-    let contentFlag = editor.value.getContent() === backReply.content
+    let contentFlag = restoreAttachmentKeys(editor.value.getContent()) === backReply.content
     let receiveFlag = form.receiveEmail.length === 1 && form.receiveEmail[0] === backReply.receiveEmail[0]
     if (backReply.sendType === 'forward' && form.receiveEmail.length === 0) {
       receiveFlag = true;
@@ -606,7 +589,7 @@ function close() {
     type: 'warning',
     distinguishCancelAndClose: true
   }).then(async () => {
-    const formData = {...toRaw(form)};
+    const formData = {...toRaw(form), content: restoreAttachmentKeys(form.content)};
     delete formData.draftId
     delete formData.attachments
     formData.createTime = dayjs().utc().format('YYYY-MM-DD HH:mm:ss');

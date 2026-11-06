@@ -62,14 +62,8 @@ export async function email(message, env, ctx) {
 			return;
 		}
 
-		let account = await accountService.selectByEmailIncludeDel({ env: env }, message.to);
-
-		if (!account) {
-			const baseEmail = emailUtils.getBaseEmail(message.to);
-			if (baseEmail && baseEmail !== message.to) {
-				account = await accountService.selectByEmailIncludeDel({ env: env }, baseEmail);
-			}
-		}
+		// Base mailbox ownership wins over historical cross-user +alias records.
+		const account = await accountService.resolveRecipient({ env }, message.to);
 
 		if (!account && noRecipient === settingConst.noRecipient.CLOSE) {
 			message.setReject('Recipient not found');

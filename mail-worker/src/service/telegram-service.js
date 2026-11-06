@@ -9,10 +9,24 @@ dayjs.extend(timezone);
 import { eq } from 'drizzle-orm';
 import jwtUtils from '../utils/jwt-utils';
 import emailMsgTemplate from '../template/email-msg';
-import emailTextTemplate from '../template/email-text';
-import emailHtmlTemplate from '../template/email-html';
-import verifyUtils from '../utils/verify-utils';
+import emailHtmlTemplate, { escapeHtml } from '../template/email-html';
 import domainUtils from "../utils/domain-uitls";
+
+export const TELEGRAM_PREVIEW_PURPOSE = 'telegram-email-preview';
+export const TELEGRAM_PREVIEW_TTL = 24 * 60 * 60;
+
+// Deliberately reject legacy unscoped/non-expiring tokens. Old Telegram View
+// buttons stop working after this upgrade; newly delivered messages get scoped,
+// 24-hour links. No fallback to authentication JWTs or permanent legacy links.
+export function isPreviewToken(payload, now = Math.floor(Date.now() / 1000)) {
+	return !!payload
+		&& payload.purpose === TELEGRAM_PREVIEW_PURPOSE
+		&& Number.isSafeInteger(payload.emailId) && payload.emailId > 0
+		&& Number.isSafeInteger(payload.iat) && payload.iat <= now
+		&& Number.isSafeInteger(payload.exp) && payload.exp > now
+		&& payload.exp > payload.iat
+		&& payload.exp - payload.iat <= TELEGRAM_PREVIEW_TTL;
+}
 
 const telegramService = {
 
@@ -22,8 +36,9 @@ const telegramService = {
 
 		const result = await jwtUtils.verifyToken(c, token);
 
-		if (!result) {
-			return emailTextTemplate('Access denied')
+		if (!isPreviewToken(result)) {
+			c.status?.(403);
+			return emailHtmlTemplate('<p>Access denied. Preview links expire after 24 hours; legacy links are no longer accepted.</p>');
 		}
 
 		const emailRow = await orm(c).select().from(email).where(eq(email.emailId, result.emailId)).get();
@@ -34,11 +49,12 @@ const telegramService = {
 				const { r2Domain } = await settingService.query(c);
 				return emailHtmlTemplate(emailRow.content || '', r2Domain)
 			} else {
-				return emailTextTemplate(emailRow.text || '')
+				return emailHtmlTemplate(`<pre>${escapeHtml(emailRow.text || '')}</pre>`);
 			}
 
 		} else {
-			return emailTextTemplate('The email does not exist')
+			c.status?.(404);
+			return emailHtmlTemplate('<p>The email does not exist</p>');
 		}
 
 	},
@@ -49,7 +65,10 @@ const telegramService = {
 
 		const tgChatIds = tgChatId.split(',');
 
-		const jwtToken = await jwtUtils.generateToken(c, { emailId: email.emailId })
+		const jwtToken = await jwtUtils.generateToken(c, {
+			emailId: email.emailId,
+			purpose: TELEGRAM_PREVIEW_PURPOSE
+		}, TELEGRAM_PREVIEW_TTL);
 
 		const webAppUrl = customDomain ? `${domainUtils.toOssDomain(customDomain)}/api/telegram/getEmail/${jwtToken}` : 'https://www.cloudflare.com/404'
 		const inlineKeyboard = [

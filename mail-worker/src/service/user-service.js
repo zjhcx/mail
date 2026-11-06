@@ -20,6 +20,7 @@ import {oauth} from "../entity/oauth";
 import oauthService from "./oauth-service";
 import settingService from './setting-service';
 import starService from './star-service';
+import { assertPrimaryEmail } from '../utils/alias-policy';
 
 const userService = {
 
@@ -67,6 +68,17 @@ const userService = {
 		await orm(c).update(user).set({ password: hash, salt: salt }).where(eq(user.userId, userId)).run();
 	},
 
+	// Compare-and-swap avoids overwriting a password changed during a concurrent login.
+	async upgradePasswordHash(c, userRow, replacement) {
+		const updated = await orm(c).update(user).set({ password: replacement.hash, salt: replacement.salt })
+			.where(and(eq(user.userId, userRow.userId), eq(user.password, userRow.password), eq(user.salt, userRow.salt)))
+			.returning({ userId: user.userId }).get();
+		if (!updated) return false;
+		userRow.password = replacement.hash;
+		userRow.salt = replacement.salt;
+		return true;
+	},
+
 	selectByEmail(c, email) {
 		return orm(c).select().from(user).where(
 			and(
@@ -76,6 +88,7 @@ const userService = {
 	},
 
 	async insert(c, params) {
+		assertPrimaryEmail(params.email);
 		const { userId } = await orm(c).insert(user).values({ ...params }).returning().get();
 		return userId;
 	},
@@ -324,6 +337,7 @@ const userService = {
 	async add(c, params) {
 
 		let { email, type, password } = params;
+		assertPrimaryEmail(email);
 
 		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
 			throw new BizError(t('notEmailDomain'));

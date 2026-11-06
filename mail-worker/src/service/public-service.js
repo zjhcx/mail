@@ -14,6 +14,7 @@ import { isDel, roleConst } from '../const/entity-const';
 import email from '../entity/email';
 import userService from './user-service';
 import KvConst from '../const/kv-const';
+import { assertPrimaryEmail } from '../utils/alias-policy';
 
 const publicService = {
 
@@ -100,6 +101,7 @@ const publicService = {
 		if (list.length === 0) return;
 
 		for (const emailRow of list) {
+			assertPrimaryEmail(emailRow.email);
 			if (!verifyUtils.isEmail(emailRow.email)) {
 				throw new BizError(t('notEmail'));
 			}
@@ -185,7 +187,9 @@ const publicService = {
 			throw new BizError(t('notExistUser'));
 		}
 
-		if (!await cryptoUtils.verifyPassword(password, userRow.salt, userRow.password)) {
+		const verified = await cryptoUtils.verifyPasswordAndRehash(password, userRow.salt, userRow.password);
+		if (!verified.verified) throw new BizError(t('IncorrectPwd'));
+		if (verified.replacement && !await userService.upgradePasswordHash(c, userRow, verified.replacement)) {
 			throw new BizError(t('IncorrectPwd'));
 		}
 	}

@@ -6,6 +6,7 @@
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
+import DOMPurify from 'dompurify'
 
 const props = defineProps({
   html: {
@@ -21,16 +22,13 @@ let shadowRoot = null
 function updateContent() {
   if (!shadowRoot) return;
 
-  // 1. 提取 <body> 的 style 属性（如果存在）
-  const bodyStyleRegex = /<body[^>]*style="([^"]*)"[^>]*>/i;
-  const bodyStyleMatch = props.html.match(bodyStyleRegex);
-  const bodyStyle = bodyStyleMatch ? bodyStyleMatch[1] : '';
+  const safeHtml = DOMPurify.sanitize(props.html, {WHOLE_DOCUMENT: true, ADD_ATTR: ['target']})
+  const doc = new DOMParser().parseFromString(safeHtml, 'text/html')
+  const bodyStyle = doc.body.getAttribute('style') || ''
+  const cleanedHtml = doc.head.innerHTML + doc.body.innerHTML
 
-  // 2. 移除 <body> 标签（保留内容）
-  const cleanedHtml = props.html.replace(/<\/?body[^>]*>/gi, '');
-
-  // 3. 将 body 的 style 应用到 .shadow-content
-  shadowRoot.innerHTML = `
+  // Never interpolate an attribute value into a raw HTML/style context.
+  const markup = `
     <style>
       :host {
         all: initial;
@@ -63,7 +61,6 @@ function updateContent() {
         width: fit-content;
         height: fit-content;
         min-width: 100%;
-        ${bodyStyle ? bodyStyle : ''} /* 注入 body 的 style */
       }
 
       img:not(table img) {
@@ -76,6 +73,9 @@ function updateContent() {
       ${cleanedHtml}
     </div>
   `;
+  shadowRoot.innerHTML = DOMPurify.sanitize(markup, {ADD_ATTR: ['target']})
+  const content = shadowRoot.querySelector('.shadow-content')
+  if (content) content.style.cssText = bodyStyle
 }
 
 function autoScale() {

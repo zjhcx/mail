@@ -11,6 +11,7 @@ import loading from "@/components/loading/index.vue";
 import {useI18n} from 'vue-i18n'
 import {useUiStore} from '@/store/ui.js'
 import {useSettingStore} from '@/store/setting.js'
+import {attachmentKey, attachmentUrls} from '@/utils/attachment-urls.js'
 
 defineExpose({
   clearEditor,
@@ -39,13 +40,36 @@ const showLoading = ref(false);
 const uiStore = useUiStore();
 const settingStore = useSettingStore();
 
+let attachmentRefresh
 onMounted(() => {
   initTinyMCE();
+  attachmentRefresh = setInterval(refreshInlineAttachments, 90 * 1000)
 });
 
 onBeforeUnmount(() => {
+  clearInterval(attachmentRefresh)
   destroyEditor();
 });
+
+async function refreshInlineAttachments() {
+  const current = editor.value
+  const body = current?.getBody()
+  if (!body) return
+  const images = [...body.querySelectorAll('img')].map(img => ({img, src: img.getAttribute('src'), key: attachmentKey(img.getAttribute('src'))})).filter(item => item.key)
+  if (!images.length) return
+  try {
+    const urls = await attachmentUrls(images.map(item => item.key))
+    if (editor.value !== current) return
+    for (const {img, src, key} of images) {
+      if (!img.isConnected || img.getAttribute('src') !== src) continue
+      img.setAttribute('src', urls[key])
+      img.setAttribute('data-mce-src', urls[key])
+    }
+  } catch (error) {
+    // No unsigned/CDN retry. Existing capabilities simply expire.
+    console.error('Unable to refresh editor attachments', error)
+  }
+}
 
 watch(() => props.defValue, (newValue) => {
   if (editor.value && editor.value.getContent() !== newValue) {

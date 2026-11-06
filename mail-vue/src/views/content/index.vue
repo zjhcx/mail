@@ -42,7 +42,7 @@
             <el-alert v-if="email.status === 5" :closable="false" :title="$t('delayed')" class="email-msg" type="warning" show-icon />
           </div>
           <el-scrollbar class="htm-scrollbar" :class="!email.attList?.length ? 'bottom-distance' : ''">
-            <ShadowHtml class="shadow-html" :html="formatImage(email.content)" v-if="email.content" />
+            <ShadowHtml class="shadow-html" :html="renderedContent" v-if="email.content" />
             <pre v-else class="email-text" >{{email.text}}</pre>
           </el-scrollbar>
           <div class="att" v-if="email.attList?.length > 0">
@@ -62,7 +62,7 @@
                 <div class="att-size">{{ formatBytes(att.size) }}</div>
                 <div class="opt-icon att-icon">
                   <Icon v-if="isImage(att.filename)" icon="hugeicons:view" width="22" height="22" @click="showImage(att.key)"/>
-                  <a :href="cvtR2Url(att.key)" download>
+                  <a href="#" @click.prevent="downloadAttachment(att)">
                     <Icon icon="system-uicons:push-down" width="22" height="22"/>
                   </a>
                 </div>
@@ -92,9 +92,8 @@ import {useAccountStore} from "@/store/account.js";
 import {formatDetailDate} from "@/utils/day.js";
 import {starAdd, starCancel} from "@/request/star.js";
 import {getExtName, formatBytes} from "@/utils/file-utils.js";
-import {cvtR2Url,toOssDomain} from "@/utils/convert.js";
+import {attachmentUrl, formatAttachmentHtml} from "@/utils/attachment-urls.js";
 import {getIconByName} from "@/utils/icon-utils.js";
-import {useSettingStore} from "@/store/setting.js";
 import {allEmailDelete} from "@/request/all-email.js";
 import {useUiStore} from "@/store/ui.js";
 import {useI18n} from "vue-i18n";
@@ -102,7 +101,6 @@ import {EmailUnreadEnum} from "@/enums/email-enum.js";
 const { t } = useI18n()
 
 const uiStore = useUiStore();
-const settingStore = useSettingStore();
 const accountStore = useAccountStore();
 const emailStore = useEmailStore();
 const router = useRouter()
@@ -236,18 +234,56 @@ function toMessage(message) {
   return  message ? JSON.parse(message).message : '';
 }
 
-function formatImage(content) {
-  content = content || '';
-  const domain = settingStore.settings.r2Domain;
-  return  content.replace(/{{domain}}/g, toOssDomain(domain) + '/');
+const renderedContent = ref('')
+let renderVersion = 0
+let previewVersion = 0
+async function refreshContent() {
+  const version = ++renderVersion
+  renderedContent.value = ''
+  try {
+    const html = await formatAttachmentHtml(email.value.content)
+    if (version === renderVersion) renderedContent.value = html
+  } catch (error) {
+    console.error('Unable to authorize inline attachments', error)
+  }
+}
+watch(() => [email.value.emailId, email.value.content], () => {
+  ++previewVersion
+  showPreview.value = false
+  refreshContent()
+}, {immediate: true})
+// Refresh displayed capabilities before their five-minute server expiry.
+const attachmentRefresh = setInterval(refreshContent, 3 * 60 * 1000)
+onUnmounted(() => {
+  ++renderVersion
+  ++previewVersion
+  clearInterval(attachmentRefresh)
+})
+
+async function downloadAttachment(att) {
+  try {
+    const url = await attachmentUrl(att.key)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = att.filename || ''
+    link.rel = 'noreferrer'
+    link.click()
+  } catch (error) {
+    ElMessage.error(error.message || 'Attachment unavailable')
+  }
 }
 
-function showImage(key) {
-  if (!isImage(key)) return;
-  const url = cvtR2Url(key)
-  srcList.length = 0
-  srcList.push(url)
-  showPreview.value = true
+async function showImage(key) {
+  if (!isImage(key)) return
+  const version = ++previewVersion
+  try {
+    const url = await attachmentUrl(key)
+    if (version !== previewVersion) return
+    srcList.splice(0, srcList.length, url)
+    showPreview.value = true
+  } catch (error) {
+    if (version === previewVersion) ElMessage.error(error.message || 'Attachment unavailable')
+  }
 }
 
 function isImage(filename) {

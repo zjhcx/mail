@@ -3,7 +3,7 @@ import { email } from './email/email';
 import userService from './service/user-service';
 import verifyRecordService from './service/verify-record-service';
 import emailService from './service/email-service';
-import r2Service from './service/r2-service';
+import attachmentAccessService from './service/attachment-access-service';
 import oauthService from './service/oauth-service';
 import analysisService from './service/analysis-service';
 export default {
@@ -19,12 +19,12 @@ export default {
 
 		if (url.pathname.startsWith('/oss/')) {
 			const key = url.pathname.slice('/oss/'.length);
-			const resp = await r2Service.toObjResp({ env }, key);
+			const resp = await attachmentAccessService.objectResponse({ env }, key, url.searchParams.get('token'));
 			return resp || new Response('Not Found', { status: 404 });
 		}
 
 		 if (['/static/','/attachments/'].some(p => url.pathname.startsWith(p))) {
-			 const resp = await r2Service.toObjResp({ env }, url.pathname.substring(1));
+			 const resp = await attachmentAccessService.objectResponse({ env }, url.pathname.substring(1), url.searchParams.get('token'));
 			 return resp || new Response('Not Found', { status: 404 });
 		 }
 

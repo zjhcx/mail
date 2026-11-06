@@ -12,6 +12,7 @@ import turnstileService from './turnstile-service';
 import roleService from './role-service';
 import { t } from '../i18n/i18n';
 import verifyRecordService from './verify-record-service';
+import { hasPlusTag, baseEmail, resolveRecipient } from '../utils/alias-policy';
 
 const accountService = {
 
@@ -57,13 +58,7 @@ const accountService = {
 			throw new BizError(t('isRegAccount'));
 		}
 
-		if (email.includes('+')) {
-			const baseEmail = emailUtils.getBaseEmail(email);
-			const baseAccount = await this.selectByEmailIncludeDel(c, baseEmail);
-			if (!baseAccount || baseAccount.userId !== userId) {
-				throw new BizError(t('notOwner'));
-			}
-		}
+		await this.assertAliasOwner(c, email, userId);
 
 		const userRow = await userService.selectById(c, userId);
 		const roleRow = await roleService.selectById(c, userRow.type);
@@ -105,6 +100,21 @@ const accountService = {
 
 		accountRow.addVerifyOpen = addVerifyOpen
 		return accountRow;
+	},
+
+	async assertAliasOwner(c, email, userId) {
+		if (!hasPlusTag(email)) return;
+		const base = await this.selectByEmailIncludeDel(c, baseEmail(email));
+		if (!base || base.isDel === isDel.DELETE || base.userId !== userId) {
+			throw new BizError(t('notOwner'), 403);
+		}
+	},
+
+	async resolveRecipient(c, email) {
+		const addresses = hasPlusTag(email) ? [email, baseEmail(email)] : [email];
+		const rows = await orm(c).select().from(account)
+			.where(inArray(sql`${account.email} COLLATE NOCASE`, addresses.map(value => value.toLowerCase()))).all();
+		return resolveRecipient(email, rows);
 	},
 
 	selectByEmailIncludeDel(c, email) {
@@ -183,10 +193,12 @@ const accountService = {
 	},
 
 	async insert(c, params) {
+		await this.assertAliasOwner(c, params.email, params.userId);
 		await orm(c).insert(account).values({ ...params }).returning();
 	},
 
 	async insertList(c, list) {
+		for (const params of list) await this.assertAliasOwner(c, params.email, params.userId);
 		await orm(c).insert(account).values(list).run();
 	},
 

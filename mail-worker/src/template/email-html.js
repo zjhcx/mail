@@ -1,138 +1,36 @@
 import { parseHTML } from 'linkedom';
 import domainUtils from '../utils/domain-uitls';
 
+// The wrapper never executes scripts. The iframe has a unique opaque origin and
+// cannot run scripts, submit forms, open popups, or navigate the parent page.
+export const PREVIEW_CSP = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src https: http: data:; font-src data:; frame-src 'self' about:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox";
+const MAIL_CSP = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src https: http: data:; font-src data:; frame-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+
+export function escapeHtml(value) {
+	return String(value ?? '').replace(/[&<>"']/g, character => ({
+		'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+	})[character]);
+}
+
 export default function emailHtmlTemplate(html, domain) {
+	const { document } = parseHTML(String(html ?? ''));
+	// Defense in depth; the sandbox and CSP remain the security boundary even
+	// if an HTML parser disagrees with this cleanup. Links are deliberately inert.
+	document.querySelectorAll('script, meta, base, iframe, frame, frameset, object, embed, form, link').forEach(node => node.remove());
+	for (const node of document.querySelectorAll('*')) {
+		for (const attribute of [...node.attributes]) {
+			if (/^on/i.test(attribute.name) || ['href', 'xlink:href', 'target', 'formaction', 'action', 'ping', 'download', 'srcdoc', 'referrerpolicy'].includes(attribute.name.toLowerCase())) {
+				node.removeAttribute(attribute.name);
+			}
+		}
+	}
 
-	const { document } = parseHTML(html);
-	document.querySelectorAll('script').forEach(script => script.remove());
-	html = document.toString();
-	html = html.replace(/{{domain}}/g, domainUtils.toOssDomain(domain) + '/');
-	const safeHtmlJson = JSON.stringify(html).replace(/</g, '\\u003C');
+	const attachmentBase = domainUtils.toOssDomain(domain) || '';
+	const mailHtml = document.toString().replace(/{{domain}}/g, () => attachmentBase + '/');
+	const srcdoc = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${escapeHtml(MAIL_CSP)}"><meta name="referrer" content="no-referrer"><style>body{margin:0;padding:12px;overflow-wrap:anywhere;font-family:Arial,sans-serif}img{max-width:100%;height:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{cursor:default}</style></head><body>${mailHtml}</body></html>`;
 
+	// Escape the ENTIRE document as one quoted attribute. Never embed mail in a
+	// top-level script, style, or HTML element, or use top-level innerHTML.
 	return `<!DOCTYPE html>
-<html lang='en' >
-<head>
-    <meta charset='UTF-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            background: #FFF;
-        }
-
-        .content-box {
-        		padding: 15px 10px;
-            width: 100%;
-            height: 100%;
-            overflow: auto; /* 改为 auto 允许滚动 */
-            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }
-
-        .content-html {
-            width: 100%;
-            height: 100%;
-        }
-    </style>
-</head>
-<body>
-    <div class='content-box'>
-        <div id='container' class='content-html'></div>
-    </div>
-
-    <script>
-
-        function renderHTML(html) {
-            const container = document.getElementById('container');
-            const shadowRoot = container.attachShadow({ mode: 'open' });
-
-            // 提取 <body> 的 style 属性
-            const bodyStyleRegex = /<body[^>]*style="([^"]*)"[^>]*>/i;
-            const bodyStyleMatch = html.match(bodyStyleRegex);
-            const bodyStyle = bodyStyleMatch ? bodyStyleMatch[1] : '';
-
-            // 移除 <body> 标签
-            const cleanedHtml = html.replace(/<\\/?body[^>]*>/gi, '');
-
-            // 渲染内容
-            shadowRoot.innerHTML = \`
-                <style>
-                    :host {
-                        all: initial;
-                        width: 100%;
-                        height: 100%;
-                        font-family: Inter, -apple-system, BlinkMacSystemFont,
-                                    'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-                        font-size: 14px;
-                        line-height: 1.5;
-                        color: #13181D;
-                        word-break: break-word;
-                        overflow: auto; /* 添加滚动 */
-                    }
-
-                    h1, h2, h3, h4 {
-                        font-size: 18px;
-                        font-weight: 700;
-                    }
-
-                    p {
-                        margin: 0;
-                    }
-
-                    a {
-                        text-decoration: none;
-                        color: #0E70DF;
-                    }
-
-                    .shadow-content {
-                        background: #FFFFFF;
-                        width: fit-content;
-                        height: fit-content;
-                        min-width: 100%;
-                        \${bodyStyle ? bodyStyle : ''} /* 注入 body 的 style */
-                    }
-
-                    img:not(table img) {
-                        max-width: 100% !important;
-                        height: auto !important;
-                    }
-                </style>
-                <div class="shadow-content">
-                    \${cleanedHtml}
-                </div>
-            \`;
-
-            // 自动缩放
-            autoScale(shadowRoot, container);
-        }
-
-        function autoScale(shadowRoot, container) {
-
-            if (!shadowRoot || !container) return;
-
-            const parent = container;
-            const shadowContent = shadowRoot.querySelector('.shadow-content');
-
-            if (!shadowContent) return;
-
-            const parentWidth = parent.offsetWidth;
-            const childWidth = shadowContent.scrollWidth;
-
-            if (childWidth === 0) return;
-
-            const scale = parentWidth / childWidth;
-
-            const hostElement = shadowRoot.host;
-            hostElement.style.zoom = scale;
-        }
-
-        // 使用示例
-        const exampleHtml = ${safeHtmlJson};
-
-        // 渲染HTML
-        renderHTML(exampleHtml);
-    </script>
-</body>
-</html>`
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Email preview</title><style>html,body{margin:0;width:100%;height:100%;background:#fff}body{display:flex;flex-direction:column}p{margin:0;padding:8px 12px;font:12px Arial,sans-serif;color:#555}iframe{display:block;flex:1;width:100%;border:0}</style></head><body><p>Read-only email preview. Links and active content are disabled.</p><iframe title="Email content" sandbox="" referrerpolicy="no-referrer" srcdoc="${escapeHtml(srcdoc)}"></iframe></body></html>`;
 }

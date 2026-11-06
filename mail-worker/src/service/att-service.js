@@ -9,6 +9,7 @@ import { parseHTML } from 'linkedom';
 import { v4 as uuidv4 } from 'uuid';
 import domainUtils from '../utils/domain-uitls';
 import settingService from "./setting-service";
+import userContext from '../security/user-context';
 
 const attService = {
 
@@ -81,26 +82,18 @@ const attService = {
 				imageDataList.push(attData);
 			}
 
-			//邮件正文站内图片转cid附件
-			if (src && (src.startsWith(domainUtils.toOssDomain(r2Domain)) || src.startsWith('attachments/'))) {
-
-				const cid = uuidv4().replace(/-/g, '')
+			// Normalize short-lived display URLs back to object keys before sending.
+			let localKey = src?.replace(/^\{\{domain\}\}/, '').replace(/^\//, '');
+			const publicDomain = domainUtils.toOssDomain(r2Domain);
+			if (publicDomain && src?.startsWith(publicDomain + '/')) {
+				localKey = src.slice(publicDomain.length + 1);
+			}
+			if (localKey?.startsWith('oss/')) localKey = localKey.slice(4);
+			localKey = localKey?.split('?')[0];
+			if (localKey?.startsWith('attachments/')) {
+				const cid = uuidv4().replace(/-/g, '');
 				img.setAttribute('src', 'cid:' + cid);
-
-				const attData = {};
-
-				if (src.startsWith(domainUtils.toOssDomain(r2Domain))) {
-					attData.key = src.replace(domainUtils.toOssDomain(r2Domain) + '/','');
-				}
-
-				if (src.startsWith('attachments/')) {
-					attData.key = src;
-				}
-
-				attData.contentId = cid;
-				attData.type = attConst.type.EMBED;
-				imageDataList.push(attData);
-
+				imageDataList.push({ key: localKey, contentId: cid, type: attConst.type.EMBED });
 			}
 
 			const hasInlineWidth = img.hasAttribute('width');
@@ -270,7 +263,10 @@ const attService = {
 		if (!keys || keys.length === 0) {
 			return []
 		}
-		return orm(c).select().from(att).where(inArray(att.key, keys)).orderBy(desc(att.attId)).groupBy(att.key).all();
+		// Sending/replying must not turn a known foreign object key into an attachment.
+		return orm(c).select().from(att).where(and(
+			inArray(att.key, keys), eq(att.userId, userContext.getUserId(c))
+		)).orderBy(desc(att.attId)).groupBy(att.key).all();
 	}
 };
 

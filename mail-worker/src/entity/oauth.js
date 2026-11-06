@@ -1,4 +1,4 @@
-import { sqliteTable, integer, text } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, integer, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 export const oauth = sqliteTable('oauth', {
@@ -13,5 +13,5 @@ export const oauth = sqliteTable('oauth', {
 	createTime: text('create_time').default(sql`CURRENT_TIMESTAMP`).notNull(),
 	platform: text('platform'),
 	userId: integer('user_id').default(0).notNull()
-});
+}, table => [uniqueIndex('idx_oauth_platform_identity').on(table.platform, table.oauthUserId)]);
 

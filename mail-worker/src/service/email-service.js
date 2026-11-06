@@ -25,6 +25,7 @@ import { att } from '../entity/att';
 import telegramService from './telegram-service';
 import webhookService from './webhook-service';
 import forwardMime from '../utils/forward-mime';
+import { resolveRecipient } from '../utils/alias-policy';
 
 const emailService = {
 
@@ -401,6 +402,8 @@ const emailService = {
 		if (accountRow.userId !== userId) {
 			throw new BizError(t('sendEmailNotCurUser'));
 		}
+		// Historical orphan/conflicting plus identities cannot impersonate a base owner.
+		await accountService.assertAliasOwner(c, accountRow.email, userId);
 
 		if (c.env.admin !== userRow.email) {
 			//用户没有这个域名的使用权限
@@ -827,12 +830,10 @@ const emailService = {
 		const { noRecipient  } = await settingService.query(c);
 
 		//查询所有收件人账号信息
-		let accountList = await orm(c).select().from(account).where(inArray(sql`${account.email} COLLATE NOCASE`, receiveEmail)).all();
+		let accountList = await orm(c).select().from(account).where(inArray(sql`${account.email} COLLATE NOCASE`, receiveEmail.map(value => value.toLowerCase()))).all();
 
-		// 对于含+未精确匹配的收件人，获取基础地址账号
-		const plusEmails = receiveEmail.filter(
-			e => e.includes('+') && !accountList.some(a => a.email.toLowerCase() === e.toLowerCase())
-		);
+		// Always load base owners, even if a legacy conflicting exact alias exists.
+		const plusEmails = receiveEmail.filter(e => e.split('@')[0].includes('+'));
 		const baseAccounts = [];
 		if (plusEmails.length > 0) {
 			const baseEmails = [...new Set(
@@ -842,7 +843,7 @@ const emailService = {
 			const needed = baseEmails.filter(e => !existing.has(e.toLowerCase()));
 			if (needed.length > 0) {
 				const rows = await orm(c).select().from(account)
-					.where(inArray(sql`${account.email} COLLATE NOCASE`, needed)).all();
+					.where(inArray(sql`${account.email} COLLATE NOCASE`, needed.map(value => value.toLowerCase()))).all();
 				baseAccounts.push(...rows);
 			}
 		}
@@ -867,13 +868,7 @@ const emailService = {
 			emailValues.toName = emailUtils.getName(email);
 			emailValues.emailId = null;
 
-			let accountRow = allAccounts.find(accountRow => accountRow.email.toLowerCase() === email.toLowerCase());
-
-			// 精确匹配不到时回退到主地址（去掉 +tag）
-			if (!accountRow && email.includes('+')) {
-				const baseEmail = emailUtils.getBaseEmail(email);
-				accountRow = allAccounts.find(accountRow => accountRow.email.toLowerCase() === baseEmail.toLowerCase());
-			}
+			const accountRow = resolveRecipient(email, allAccounts);
 
 			//如果收件人存在就把邮件信息改成收件人的
 			if (accountRow) {
