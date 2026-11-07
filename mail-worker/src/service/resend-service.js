@@ -1,9 +1,16 @@
 import emailService from './email-service';
 import { emailConst } from '../const/entity-const';
+import resendReceiveService from './resend-receive-service';
 
 const resendService = {
 
 	async webhooks(c, body) {
+		if (body.type === 'email.received') return resendReceiveService.receive(c, body);
+		if (!['email.sent', 'email.delivered', 'email.complained', 'email.bounced',
+			'email.delivery_delayed', 'email.failed'].includes(body.type)) return;
+		if (typeof body.data?.email_id !== 'string' || !body.data.email_id) {
+			throw new Error('Invalid Resend email ID');
+		}
 
 		const params = {
 			resendEmailId: body.data.email_id,

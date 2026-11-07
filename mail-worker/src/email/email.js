@@ -43,15 +43,9 @@ export async function email(message, env, ctx) {
 			return;
 		}
 
-		const reader = message.raw.getReader();
-		let content = '';
-
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			content += new TextDecoder().decode(value);
-		}
-
+		// Keep MIME as bytes: decoding each stream chunk independently corrupts
+		// multibyte characters split across chunks and non-UTF-8 messages.
+		const content = await new Response(message.raw).arrayBuffer();
 		const email = await PostalMime.parse(content);
 
 
@@ -85,7 +79,7 @@ export async function email(message, env, ctx) {
 				return;
 			}
 
-			if(roleService.isBanEmail(banEmail, email.from.address)) {
+			if(roleService.isBanEmail(banEmail, email.from?.address || '')) {
 				message.setReject('The recipient is disabled from receiving emails.');
 				return;
 			}
@@ -153,6 +147,7 @@ export async function email(message, env, ctx) {
 		}
 
 		emailRow = await emailService.completeReceive({ env }, account ? emailConst.status.RECEIVE : emailConst.status.NOONE, emailRow.emailId);
+		if (message.onStored) await message.onStored();
 
 
 		if (ruleType === settingConst.ruleType.RULE) {
@@ -178,7 +173,7 @@ export async function email(message, env, ctx) {
 			await Promise.all(emails.map(async email => {
 
 				try {
-					await message.forward(email);
+					if (message.forward) await message.forward(email);
 				} catch (e) {
 					console.error(`转发邮箱 ${email} 失败：`, e);
 				}
@@ -217,7 +212,7 @@ function checkBlock(blackSubjectStr, blackContentStr, blackFromStr, email) {
 	}
 
 	for (const blackFrom of blackFromList) {
-		if (email.from.address === blackFrom || emailUtils.getDomain(email.from.address) === blackFrom) {
+		if (email.from?.address === blackFrom || emailUtils.getDomain(email.from?.address || '') === blackFrom) {
 			return true
 		}
 	}

@@ -105,6 +105,29 @@
 
 - **文件存储**：[Cloudflare R2](https://developers.cloudflare.com/r2/)
 
+## 使用 Resend 收信
+
+除了 Cloudflare Email Routing，也可以使用 Resend 接收邮件，邮件正文、附件、内嵌图片、别名归属和收信规则复用现有处理流程。
+
+1. 在 Resend 为域名开启 **Receiving**，按其控制台要求配置收信用 MX 记录。同一个域名不要同时配置 Cloudflare Email Routing 和 Resend 的收信 MX；如需并存，请使用不同子域名。该域名也必须加入本项目 Worker 的 `domain` 配置。
+2. 为 Worker 设置以下 **Secrets**（不要写入仓库或前端配置）：
+   - `RESEND_API_KEY`：有读取收件邮件权限的 Resend API Key（仅发送权限的 Key 不适用）。它独立于系统设置中用于发件的域名 Token。
+   - `RESEND_WEBHOOK_SECRET`：Resend Webhook 的签名密钥（`whsec_...`）。
+3. 在 Resend 创建 Webhook，地址填写 `https://你的邮箱网站域名/api/webhooks`，订阅 **`email.received`**。原有发件状态事件也可使用同一地址；更新后所有事件都需要有效签名，原有用户需补充签名密钥。
+4. 重新部署 Worker，向已存在的本地邮箱发送一封含附件的邮件，检查收件箱及 Resend Webhook 投递日志。若允许保存未注册收件人的邮件，则仍按现有「无收件人」设置处理。
+
+```bash
+cd mail-worker
+pnpm exec wrangler secret put RESEND_API_KEY
+pnpm exec wrangler secret put RESEND_WEBHOOK_SECRET
+```
+
+实现会通过 Resend API 获取原始 MIME 邮件，再下载正文和附件；下载超时为 30 秒，原始邮件上限为 40 MiB，依赖该邮件的 `raw.download_url` 可用。失败返回非 2xx，供 Resend 重试。D1 自动创建 `resend_inbound_delivery` 表，按 Resend 邮件 ID + 实际收件地址记录完成状态，避免正常重试/并发重复入库；入库与投递记录不属于同一事务，极端进程中断仍存在重复窗口，不保证严格 exactly-once。记录暂不自动清理，需保留以支持历史事件重放去重。
+
+**边界说明：** Resend 到达 Webhook 时已接受 SMTP 邮件，收信关闭、黑名单及权限拒收仅在本系统丢弃，无法向原发件人返回 SMTP 拒收。支持 Telegram 和应用 Webhook 通知，但不支持现有基于 Cloudflare `message.forward()` 的自动邮箱转发。邮件入库后的通知失败会记录日志，不会重复投递邮件，通知本身不保证自动补发。
+
+参考：[Resend 收信域名](https://resend.com/docs/dashboard/receiving/custom-domains)、[收信 Webhook](https://resend.com/docs/dashboard/receiving/create-receiving-webhook)、[Webhook 签名](https://resend.com/docs/webhooks/verify-webhooks-requests)。
+
 ## 目录结构
 
 ```
