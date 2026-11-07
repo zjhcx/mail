@@ -69,10 +69,12 @@ const settingService = {
 
 	async get(c, showSiteKey = false) {
 
-		const [settingRow, recordList] = await Promise.all([
+		const [cachedSetting, recordList] = await Promise.all([
 			await this.query(c),
 			verifyRecordService.selectListByIP(c)
 		]);
+		// Redact a detached copy, not the request cache used by storage clients.
+		const settingRow = structuredClone(cachedSetting);
 
 
 		if (!showSiteKey) {
@@ -113,6 +115,46 @@ const settingService = {
 
 	async set(c, params) {
 		const settingData = await this.query(c);
+		const storageFields = ['bucket', 'endpoint', 'region', 's3AccessKey', 's3SecretKey'];
+		const coreFields = ['bucket', 'endpoint', 's3AccessKey', 's3SecretKey'];
+		if (storageFields.some(key => params[key] !== undefined)) {
+			for (const key of storageFields) {
+				if (params[key] === undefined) continue;
+				if (typeof params[key] !== 'string') {
+					throw new BizError('对象存储参数必须为字符串 Object storage settings must be strings.');
+				}
+				params[key] = params[key].trim();
+			}
+
+			// Only an explicit clearing of every core field may erase saved credentials.
+			const clearStorage = coreFields.every(key => params[key] === '');
+			if (!clearStorage) {
+				for (const key of ['s3AccessKey', 's3SecretKey']) {
+					if (params[key] === '') params[key] = (settingData[key] || '').trim();
+				}
+			}
+
+			const storage = { ...settingData, ...params };
+			if (!clearStorage && storageFields.some(key => storage[key]) && !coreFields.every(key => storage[key])) {
+				throw new BizError('请完整填写存储桶、Endpoint 和访问密钥 Object storage requires bucket, endpoint, access key and secret key.');
+			}
+			if (storage.endpoint) {
+				const endpoint = storage.endpoint.includes('://') ? storage.endpoint : `https://${storage.endpoint}`;
+				let url;
+				try {
+					url = new URL(endpoint);
+				} catch {
+					throw new BizError('对象存储 Endpoint 无效 Invalid object storage endpoint.');
+				}
+				if (!['http:', 'https:'].includes(url.protocol) || !url.hostname ||
+					!/^https?:\/\/[^/]/i.test(endpoint) ||
+					url.username || url.password || /[?#\\\s]/.test(endpoint) ||
+					endpoint.split('://')[1].split('/')[0].includes('@')) {
+					throw new BizError('Endpoint 仅支持 HTTP/HTTPS，不能包含账号、密码、查询或片段 Endpoint must use HTTP/HTTPS without credentials, query or fragment.');
+				}
+				params.endpoint = endpoint;
+			}
+		}
 		let resendTokens = { ...settingData.resendTokens, ...params.resendTokens };
 		Object.keys(resendTokens).forEach(domain => {
 			if (!resendTokens[domain]) delete resendTokens[domain];

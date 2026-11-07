@@ -818,14 +818,26 @@ Authorization: &lt;secret&gt;</pre>
           </div>
         </template>
       </el-dialog>
-      <el-dialog v-model="addS3Show" :title="t('s3Configuration')" width="340" @closed="resetAddS3Form">
-        <form @submit.prevent>
-          <el-input class="dialog-input" type="text" placeholder="Bucket" v-model="s3.bucket" @keyup.enter="saveS3"/>
-          <el-input class="dialog-input" type="text" placeholder="Endpoint" v-model="s3.endpoint" @keyup.enter="saveS3"/>
-          <el-input class="dialog-input" type="text" placeholder="Region" v-model="s3.region" @keyup.enter="saveS3"/>
-          <el-input class="dialog-input" type="text" :placeholder="setting.s3AccessKey || 'Access key'"
-                    v-model="s3.s3AccessKey" @keyup.enter="saveS3"/>
-          <el-input style="margin-bottom: 10px" type="text" :placeholder="setting.s3SecretKey || 'Secret key'" v-model="s3.s3SecretKey" @keyup.enter="saveS3"/>
+      <el-dialog v-model="addS3Show" :title="t('s3Configuration')" width="min(460px, 95vw)" @closed="resetAddS3Form">
+        <p class="s3-help">{{ t('s3ConfigurationDesc') }}</p>
+        <el-form label-position="top" :disabled="settingLoading" @submit.prevent="saveS3">
+          <el-form-item label="Endpoint" required>
+            <el-input v-model="s3.endpoint" placeholder="https://s3.example.com" @keyup.enter="saveS3"/>
+          </el-form-item>
+          <el-form-item label="Bucket" required>
+            <el-input v-model="s3.bucket" placeholder="my-bucket" @keyup.enter="saveS3"/>
+          </el-form-item>
+          <el-form-item label="AK (Access Key ID)" :required="!setting.s3AccessKey">
+            <el-input v-model="s3.s3AccessKey" autocomplete="off"
+                      :placeholder="setting.s3AccessKey ? t('s3KeepCredential') : 'Access Key ID'" @keyup.enter="saveS3"/>
+          </el-form-item>
+          <el-form-item label="SK (Secret Access Key)" :required="!setting.s3SecretKey">
+            <el-input v-model="s3.s3SecretKey" type="password" show-password autocomplete="new-password"
+                      :placeholder="setting.s3SecretKey ? t('s3KeepCredential') : 'Secret Access Key'" @keyup.enter="saveS3"/>
+          </el-form-item>
+          <el-form-item :label="t('s3Region')">
+            <el-input v-model="s3.region" :placeholder="t('s3RegionHint')" @keyup.enter="saveS3"/>
+          </el-form-item>
           <div class="force-path-style">
             <div class="force-path-style-left">
               <span>ForcePathStyle</span>
@@ -840,7 +852,7 @@ Authorization: &lt;secret&gt;</pre>
             <el-button :loading="clearS3Loading" @click="clearS3">{{ t('clear') }}</el-button>
             <el-button type="primary" :loading="settingLoading && !clearS3Loading" @click="saveS3">{{ t('save') }}</el-button>
           </div>
-        </form>
+        </el-form>
       </el-dialog>
       <el-dialog v-model="emailPrefixShow" :title="t('emailPrefix')"  @closed="resetEmailPrefix"  >
         <div class="email-prefix">
@@ -1340,16 +1352,34 @@ function clearS3() {
 }
 
 function saveS3() {
+  if (settingLoading.value) return
 
   const form = {
-    bucket: s3.bucket,
-    endpoint: s3.endpoint,
-    region: s3.region,
+    bucket: (s3.bucket || '').trim(),
+    endpoint: (s3.endpoint || '').trim(),
+    region: (s3.region || '').trim(),
     forcePathStyle: s3.forcePathStyle
   }
+  const accessKey = (s3.s3AccessKey || '').trim()
+  const secretKey = (s3.s3SecretKey || '').trim()
 
-  if (s3.s3AccessKey) form.s3AccessKey = s3.s3AccessKey
-  if (s3.s3SecretKey) form.s3SecretKey = s3.s3SecretKey
+  if (!form.bucket || !form.endpoint || !(accessKey || setting.value.s3AccessKey) || !(secretKey || setting.value.s3SecretKey)) {
+    ElMessage.warning(t('s3Required'))
+    return
+  }
+  try {
+    const url = new URL(form.endpoint.includes('://') ? form.endpoint : `https://${form.endpoint}`)
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password || /[?#\s]/.test(form.endpoint)) {
+      throw new Error('Invalid endpoint')
+    }
+    form.endpoint = url.toString().replace(/\/$/, '')
+  } catch {
+    ElMessage.warning(t('s3InvalidEndpoint'))
+    return
+  }
+
+  if (accessKey) form.s3AccessKey = accessKey
+  if (secretKey) form.s3SecretKey = secretKey
 
   editSetting(form)
 }
@@ -2113,6 +2143,13 @@ function editSetting(settingForm, refreshStatus = true) {
 .prefix-filter {
   display: flex;
   flex-direction: column;
+}
+
+.s3-help {
+  margin: 0 0 18px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .s3-button {
